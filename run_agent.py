@@ -12,7 +12,7 @@ async def main():
     server_params = StdioServerParameters(
         command="python",
         # Make sure this path points correctly to your mcp_server.py
-        args=["core_bank_server/app/mcp_server.py"]
+        args=["Agent/core_bank_server/app/mcp_server.py"]
     )
 
     # 2. Establish the connection to the MCP Server
@@ -80,7 +80,7 @@ async def main():
                 }
                 
                 # Stream the agent's thought process
-                for chunk in agent_executor.stream(inputs, stream_mode="values"):
+                async for chunk in agent_executor.astream(inputs, stream_mode="values"):
                     message = chunk["messages"][-1]
                     
                     if message.type == "ai":
