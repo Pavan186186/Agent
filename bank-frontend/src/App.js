@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import './App.css'; // You can style this later!
+import React, { useState, useRef, useEffect } from 'react';
+import './App.css';
 
 function App() {
   const [messages, setMessages] = useState([
@@ -7,18 +7,26 @@ function App() {
   ]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
+  const messagesEndRef = useRef(null);
+
+  // Auto-scroll to the bottom when a new message is added
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  };
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages]);
 
   const sendMessage = async () => {
     if (!input.trim()) return;
 
-    // 1. Add user message to UI
     const newMessages = [...messages, { sender: 'user', text: input }];
     setMessages(newMessages);
     setInput('');
     setLoading(true);
 
     try {
-      // 2. Send to our new Python Agent API
       const response = await fetch('http://127.0.0.1:8001/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -26,8 +34,6 @@ function App() {
       });
       
       const data = await response.json();
-      
-      // 3. Add AI response to UI
       setMessages([...newMessages, { sender: 'agent', text: data.response }]);
     } catch (error) {
       setMessages([...newMessages, { sender: 'agent', text: "Error connecting to the Bank Agent." }]);
@@ -36,40 +42,52 @@ function App() {
   };
 
   return (
-    <div style={{ maxWidth: '600px', margin: '50px auto', fontFamily: 'Arial' }}>
-      <h2>🏦 Secure AI Banking Agent</h2>
+    <div className="app-container">
+      <header className="app-header">
+        <h2 className="gradient-text">✨ Secure AI Banking</h2>
+      </header>
       
-      <div style={{ border: '1px solid #ccc', padding: '20px', height: '400px', overflowY: 'auto', borderRadius: '8px', marginBottom: '20px' }}>
+      <div className="chat-container">
         {messages.map((msg, index) => (
-          <div key={index} style={{ textAlign: msg.sender === 'user' ? 'right' : 'left', margin: '10px 0' }}>
-            <span style={{ 
-              background: msg.sender === 'user' ? '#007bff' : '#f1f1f1', 
-              color: msg.sender === 'user' ? 'white' : 'black',
-              padding: '10px 15px', 
-              borderRadius: '20px', 
-              display: 'inline-block' 
-            }}>
+          <div key={index} className={`message-wrapper ${msg.sender}`}>
+            {msg.sender === 'agent' && <div className="avatar agent-avatar">✨</div>}
+            
+            <div className={`message-bubble ${msg.sender}`}>
               {msg.text}
-            </span>
+            </div>
+
+            {msg.sender === 'user' && <div className="avatar user-avatar">👤</div>}
           </div>
         ))}
-        {loading && <div style={{ textAlign: 'left', color: 'gray' }}>Agent is thinking...</div>}
+        
+        {/* Animated Loading Dots */}
+        {loading && (
+          <div className="message-wrapper agent">
+            <div className="avatar agent-avatar">✨</div>
+            <div className="message-bubble agent typing-indicator">
+              <span></span><span></span><span></span>
+            </div>
+          </div>
+        )}
+        <div ref={messagesEndRef} />
       </div>
 
-      <div style={{ display: 'flex' }}>
-        <input 
-          style={{ flex: 1, padding: '10px', fontSize: '16px', borderRadius: '4px', border: '1px solid #ccc' }}
-          value={input} 
-          onChange={(e) => setInput(e.target.value)}
-          onKeyPress={(e) => e.key === 'Enter' && sendMessage()}
-          placeholder="Ask about your balance, transfer funds, or policy..."
-        />
-        <button 
-          style={{ padding: '10px 20px', marginLeft: '10px', fontSize: '16px', cursor: 'pointer', background: '#28a745', color: 'white', border: 'none', borderRadius: '4px' }}
-          onClick={sendMessage}
-        >
-          Send
-        </button>
+      <div className="input-container">
+        <div className="input-box">
+          <input 
+            value={input} 
+            onChange={(e) => setInput(e.target.value)}
+            onKeyPress={(e) => e.key === 'Enter' && sendMessage()}
+            placeholder="Ask about your balance, transfer funds, or bank policy..."
+          />
+          <button onClick={sendMessage} disabled={!input.trim() || loading}>
+            {/* SVG Send Icon */}
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="22" y1="2" x2="11" y2="13"></line>
+              <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+            </svg>
+          </button>
+        </div>
       </div>
     </div>
   );
