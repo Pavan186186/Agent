@@ -1,120 +1,76 @@
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+from fastapi import FastAPI
 import sqlite3
 import os
-import hashlib
 
 app = FastAPI()
 
-# --- FOOLPROOF PATHING ---
-# Navigates up 3 levels to the root AGENT folder, ensures local_db exists
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-DB_DIR = os.path.join(BASE_DIR, "local_db")
-os.makedirs(DB_DIR, exist_ok=True)  # Fixes the SQLite crash!
-DB_PATH = os.path.join(DB_DIR, "bank_database.sqlite")
+# Point to the local_db folder
+DB_PATH = os.path.join(os.path.dirname(__file__), "../../../local_db/bank_database.sqlite")
 
 def get_db_connection():
+    # Ensure the directory exists
+    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
     
-    # Auto-initialize table if it doesn't exist
-    conn.execute('''
+    # 1. Build the expanded Accounts table
+    cursor.execute('''
         CREATE TABLE IF NOT EXISTS accounts (
+            user_id TEXT,
+            owner_name TEXT,
+            username TEXT,
+            routing_number TEXT,
             account_number TEXT PRIMARY KEY,
-            owner_name TEXT NOT NULL,
-            balance REAL NOT NULL,
-            pin_hash TEXT NOT NULL
+            card_number TEXT,
+            balance REAL,
+            pin_hash TEXT
         )
     ''')
-    
-    # Seed Pavan's demo account if the database is empty
-    cursor = conn.cursor()
+
+    # 2. Build the new Transactions table for fraud detection
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS transactions (
+            tx_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            account_number TEXT,
+            merchant TEXT,
+            amount REAL,
+            status TEXT,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+
+    # 3. Seed the 5 target accounts if the table is empty
     cursor.execute("SELECT count(*) FROM accounts")
     if cursor.fetchone()[0] == 0:
-        # Inserting Pavan's account with pin_hash for '1234'
-        conn.execute("INSERT INTO accounts VALUES ('1000000001', 'PAVAN TEJA TALLAPALLI', 8500.50, '03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4')")
+        users = [
+            ('U001', 'PAVAN TEJA TALLAPALLI', 'pavan_tallapalli', '111000111', '1000000001', '4111222233334441', 8500.5, '03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4'),
+            ('U002', 'NITHIN KUMAR SURINENI', 'nithin_surineni', '111000111', '1000000002', '4111222233334442', 45000.0, '38083c7ee9121e17401883566a148aa5c2e2d55dc53bc4a94a026517dbff3c6b'),
+            ('U003', 'SAHITHI KATOORI', 'sahithi_katoori', '222000222', '2000000001', '5111222233334443', 12400.75, 'ceaa28bba4caba687dc31b1bbe79eca3c70c33f871f1ce8f528cf9ab5cfd76dd'),
+            ('U004', 'NIKHILESH GOUD', 'nikhilesh_goud', '333000333', '3000000001', '4555222233334444', 850.2, 'db2e7f1bd5ab9968ae76199b7cc74795ca7404d5a08d78567715ce532f9d2669'),
+            ('U005', 'UDAY REDDY', 'uday_reddy', '111000111', '1000000003', '6011222233334445', 105000.0, 'f8638b979b2f4f793ddb6dbd197e0ee25a7a6ea32b0ae22f5e3c5d119d839e75')
+        ]
+        cursor.executemany("INSERT INTO accounts VALUES (?, ?, ?, ?, ?, ?, ?, ?)", users)
+
+        # 4. Seed the dummy transactions
+        txs = [
+            ('1000000001', 'Sonic Drive-In', 14.50, 'Approved'),
+            ('1000000001', 'Dutch Bros. Coffee', 6.50, 'Approved'),
+            ('1000000001', 'UNKNOWN WIRE TRANSFER TO RUSSIA', 500.00, 'FLAGGED AS SUSPICIOUS'),
+            ('1000000002', 'Waymo Ride', 18.00, 'Approved'),
+            ('1000000002', 'Uber', 22.50, 'Approved'),
+            ('2000000001', 'Arizona State University', 1200.00, 'Approved'),
+            ('3000000001', 'Discord Nitro', 9.99, 'Approved'),
+            ('1000000003', 'Royal Enfield Rental', 150.00, 'Approved')
+        ]
+        cursor.executemany("INSERT INTO transactions (account_number, merchant, amount, status) VALUES (?, ?, ?, ?)", txs)
+        
         conn.commit()
         
     return conn
 
-def hash_password(password: str) -> str:
-    """Hashes the plain text pin/password into SHA-256"""
-    return hashlib.sha256(password.encode()).hexdigest()
-
-# --- Pydantic Models ---
-class AuthRequest(BaseModel):
-    account_number: str
-    password: str
-
-class TransferRequest(BaseModel):
-    from_account: str
-    password: str
-    to_account: str
-    amount: float
-
-class CreateAccountRequest(BaseModel):
-    account_number: str
-    owner_name: str
-    initial_balance: float
-    password: str
-
-# --- Secure Endpoints ---
-@app.post("/accounts/balance")
-def get_balance(req: AuthRequest):
-    conn = get_db_connection()
-    hashed_pin = hash_password(req.password)
-    
-    account = conn.execute('SELECT * FROM accounts WHERE account_number = ? AND pin_hash = ?', 
-                           (req.account_number, hashed_pin)).fetchone()
-    conn.close()
-    
-    if account is None:
-        raise HTTPException(status_code=401, detail="Authentication failed. Invalid account number or PIN.")
-    
-    return {"account_number": req.account_number, "balance": account['balance']}
-
-@app.post("/transactions/transfer")
-def transfer_funds(req: TransferRequest):
-    conn = get_db_connection()
-    hashed_pin = hash_password(req.password)
-    
-    sender = conn.execute('SELECT * FROM accounts WHERE account_number = ? AND pin_hash = ?', 
-                          (req.from_account, hashed_pin)).fetchone()
-    if sender is None:
-        conn.close()
-        raise HTTPException(status_code=401, detail="Authentication failed. Invalid PIN.")
-        
-    if sender['balance'] < req.amount:
-        conn.close()
-        raise HTTPException(status_code=400, detail="Insufficient funds.")
-
-    receiver = conn.execute('SELECT * FROM accounts WHERE account_number = ?', (req.to_account,)).fetchone()
-    if receiver is None:
-        conn.close()
-        raise HTTPException(status_code=404, detail="Destination account not found.")
-
-    try:
-        conn.execute('UPDATE accounts SET balance = balance - ? WHERE account_number = ?', (req.amount, req.from_account))
-        conn.execute('UPDATE accounts SET balance = balance + ? WHERE account_number = ?', (req.amount, req.to_account))
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise HTTPException(status_code=500, detail="Transaction failed.")
-    finally:
-        conn.close()
-
-    return {"message": f"Successfully transferred ${req.amount}."}
-
-@app.post("/accounts/create")
-def create_account(req: CreateAccountRequest):
-    conn = get_db_connection()
-    hashed_pin = hash_password(req.password)
-    try:
-        conn.execute('INSERT INTO accounts (account_number, owner_name, balance, pin_hash) VALUES (?, ?, ?, ?)',
-                     (req.account_number, req.owner_name, req.initial_balance, hashed_pin))
-        conn.commit()
-    except sqlite3.IntegrityError:
-        conn.close()
-        raise HTTPException(status_code=400, detail="Account number already exists.")
-    conn.close()
-    return {"message": f"Account {req.account_number} created successfully."}
+@app.get("/")
+def read_root():
+    """Health check endpoint to ensure the FastAPI server is running."""
+    # Triggers database connection and seeding on boot if necessary
+    get_db_connection()
+    return {"status": "Secure Bank Vault is Online", "database": "Connected"}
